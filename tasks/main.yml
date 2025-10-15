@@ -32,15 +32,14 @@
 - name: Install authorized keys (non-purging)
   ansible.builtin.authorized_key:
     user: "{{ item.0.key }}"
-    key: "{{ (item.1 if item.1 is string else item.1.key) }}"
-    key_options: "{{ (item.1.options if (item.1 is mapping and 'options' in item.1) else omit) }}"
+    key: "{{ (item.1 if item.1 is string else item.1['key']) }}"
+    key_options: "{{ (item.1['options'] if (item.1 is mapping and 'options' in item.1) else omit) }}"
     state: present
   with_subelements:
     - "{{ ssh_users | dict2items }}"
-    - value.keys
-  when:
-    - (item.0.value.state | default('present')) == 'present'
-    - (item.0.value.keys | default([])) | length > 0
+    - value['keys']
+    - skip_missing: true
+  when: (item.0.value.state | default('present')) == 'present'
 
 - name: Create sudoers drop-in (NOPASSWD configurable)
   ansible.builtin.copy:
