@@ -1,0 +1,65 @@
+---
+- name: Set sudo group (Debian-only)
+  ansible.builtin.set_fact:
+    sudo_group: "sudo"
+
+- name: Ensure sudo group exists
+  ansible.builtin.group:
+    name: "{{ sudo_group }}"
+    state: present
+
+- name: Ensure users exist / removed
+  ansible.builtin.user:
+    name: "{{ item.key }}"
+    state: "{{ item.value.state | default('present') }}"
+    shell: "{{ item.value.shell | default('/bin/bash') }}"
+    uid: "{{ item.value.uid | default(omit) }}"
+    create_home: yes
+    groups: "{{ (item.value.sudo | default(false)) | ternary(sudo_group, omit) }}"
+    append: "{{ (item.value.sudo | default(false)) | ternary(true, omit) }}"
+  loop: "{{ ssh_users | dict2items }}"
+
+- name: Ensure ~/.ssh exists for present users
+  ansible.builtin.file:
+    path: "{{ (item.value.home | default('/home/' + item.key)) + '/.ssh' }}"
+    state: directory
+    owner: "{{ item.key }}"
+    group: "{{ item.key }}"
+    mode: "0700"
+  loop: "{{ ssh_users | dict2items }}"
+  when: (item.value.state | default('present')) == 'present'
+
+- name: Install authorized keys (non-purging)
+  ansible.builtin.authorized_key:
+    user: "{{ item.0.key }}"
+    key: "{{ (item.1 if item.1 is string else item.1.key) }}"
+    key_options: "{{ (item.1.options if (item.1 is mapping and 'options' in item.1) else omit) }}"
+    state: present
+  with_subelements:
+    - "{{ ssh_users | dict2items }}"
+    - value.keys
+  when:
+    - (item.0.value.state | default('present')) == 'present'
+    - (item.0.value.keys | default([])) | length > 0
+
+- name: Create sudoers drop-in (NOPASSWD configurable)
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/{{ item.key }}"
+    owner: root
+    group: root
+    mode: "0440"
+    content: >-
+      {{ item.key }} ALL=(ALL){{ ' NOPASSWD:' if item.value.nopasswd | default(false) else ' ' }}ALL
+    validate: '/usr/sbin/visudo -cf %s'
+  loop: "{{ ssh_users | dict2items }}"
+  when:
+    - (item.value.state | default('present')) == 'present'
+    - item.value.sudo | default(false)
+
+- name: Remove sudoers drop-in when not needed
+  ansible.builtin.file:
+    path: "/etc/sudoers.d/{{ item.key }}"
+    state: absent
+  loop: "{{ ssh_users | dict2items }}"
+  when:
+    - (item.value.state | default('present')) != 'present' or not (item.value.sudo | default(false))
